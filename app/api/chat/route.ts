@@ -1,6 +1,27 @@
 import { NextResponse } from 'next/server'
 
+const recentRequests: number[] = []
+const THROTTLE_WINDOW_MS = 10_000
+const THROTTLE_MAX_REQUESTS = 3
+
 export async function POST(req: Request) {
+  const now = Date.now()
+  recentRequests.push(now)
+  const cutoff = now - THROTTLE_WINDOW_MS
+  while (recentRequests.length > 0 && recentRequests[0] < cutoff) {
+    recentRequests.shift()
+  }
+
+  if (recentRequests.length > THROTTLE_MAX_REQUESTS) {
+    return NextResponse.json(
+      {
+        message:
+          'Demasiadas solicitudes en poco tiempo. Espera unos segundos antes de intentar de nuevo.',
+      },
+      { status: 429 }
+    )
+  }
+
   const { question } = await req.json()
 
   if (!question || typeof question !== 'string') {
@@ -20,14 +41,13 @@ export async function POST(req: Request) {
     )
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${process.env.GEMINI_API_KEY}`
+  async function delay(ms: number) {
+    return new Promise((resolve) => setTimeout(resolve, ms))
+  }
 
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
+  async function fetchGemini(question: string) {
+    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="+ process.env.GEMINI_API_KEY
+    const body = JSON.stringify({
       contents: [
         {
           parts: [
@@ -37,14 +57,39 @@ export async function POST(req: Request) {
           ],
         },
       ],
-    }),
-  })
+    })
+
+    const maxRetries = 2
+    let attempt = 0
+
+    while (true) {
+      attempt += 1
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body,
+      })
+
+      if (response.ok || response.status !== 429 || attempt > maxRetries) {
+        return response
+      }
+
+      await delay(1000 * attempt)
+    }
+  }
+
+  const response = await fetchGemini(question)
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => '')
     return NextResponse.json(
       {
-        message: `Error desde Gemini: ${response.status} ${response.statusText}`,
+        message:
+          response.status === 429
+            ? 'Gemini respondió 429: demasiadas solicitudes. Espera unos segundos e inténtalo de nuevo.'
+            : `Error desde Gemini: ${response.status} ${response.statusText}`,
         details: errorText,
       },
       { status: response.status }

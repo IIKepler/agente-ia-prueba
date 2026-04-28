@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
@@ -18,6 +18,7 @@ export default function HotelAICoach() {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
+  const lastRequestRef = useRef<number | null>(null)
 
   const isLoading = status === 'loading'
 
@@ -25,6 +26,13 @@ export default function HotelAICoach() {
     e.preventDefault()
     if (!input.trim() || isLoading) return
 
+    const now = Date.now()
+    if (lastRequestRef.current && now - lastRequestRef.current < 3000) {
+      setError('Espera unos segundos antes de enviar otra pregunta.')
+      return
+    }
+
+    lastRequestRef.current = now
     const question = input.trim()
     setError(null)
     setStatus('loading')

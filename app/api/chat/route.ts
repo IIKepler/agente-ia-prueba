@@ -1,8 +1,74 @@
 import { NextResponse } from 'next/server'
 
+type ChatMessage = {
+  id?: string
+  role: 'user' | 'assistant'
+  text: string
+}
+
 const recentRequests: number[] = []
 const THROTTLE_WINDOW_MS = 10_000
 const THROTTLE_MAX_REQUESTS = 3
+const memoryStore = new Map<string, ChatMessage[]>()
+
+function chooseModel(question: string) {
+  const lower = question.toLowerCase()
+  const researchKeywords = ['investigar', 'buscar', 'web', 'tendencia', 'datos', 'fecha', 'última hora']
+  return researchKeywords.some((keyword) => lower.includes(keyword))
+    ? 'gemini-2.0'
+    : 'gemini-flash-lite-latest'
+}
+
+function buildPrompt(question: string, history: ChatMessage[]) {
+  const memoryText = history
+    .slice(-8)
+    .map((message) => `${message.role === 'user' ? 'Usuario' : 'Asistente'}: ${message.text}`)
+    .join('\n')
+
+  return `Eres un asistente experto en hotelería y experiencia al huésped. Recuerda el contexto de la conversación anterior y responde con claridad y brevedad.
+
+Contexto de la conversación:
+${memoryText}
+
+Pregunta del usuario: ${question}`
+}
+
+async function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function fetchGemini(prompt: string, model: string) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`
+  const body = JSON.stringify({
+    temperature: 0.2,
+    maxOutputTokens: 512,
+    contents: [
+      {
+        text: prompt,
+      },
+    ],
+  })
+
+  const maxRetries = 2
+  let attempt = 0
+
+  while (true) {
+    attempt += 1
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body,
+    })
+
+    if (response.ok || response.status !== 429 || attempt > maxRetries) {
+      return response
+    }
+
+    await delay(1000 * attempt)
+  }
+}
 
 export async function POST(req: Request) {
   const now = Date.now()
@@ -22,9 +88,12 @@ export async function POST(req: Request) {
     )
   }
 
-  const { question } = await req.json()
+  const body = await req.json()
+  const question = typeof body.question === 'string' ? body.question : ''
+  const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
+  const history = Array.isArray(body.history) ? body.history : []
 
-  if (!question || typeof question !== 'string') {
+  if (!question) {
     return NextResponse.json(
       { message: 'La pregunta es obligatoria.' },
       { status: 400 }
@@ -41,66 +110,32 @@ export async function POST(req: Request) {
     )
   }
 
-  async function delay(ms: number) {
-    return new Promise((resolve) => setTimeout(resolve, ms))
+  if (sessionId) {
+    memoryStore.set(sessionId, history)
   }
 
-  async function fetchGemini(question: string) {
-    const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key="+ process.env.GEMINI_API_KEY
-    const body = JSON.stringify({
-      contents: [
-        {
-          parts: [
-            {
-              text: `You are a practical startup coach. Give clear, useful, concise advice.\nUser question: ${question}`,
-            },
-          ],
-        },
-      ],
-    })
+  const model = chooseModel(question)
+  const prompt = buildPrompt(question, history)
+  const initialResponse = await fetchGemini(prompt, model)
 
-    const maxRetries = 2
-    let attempt = 0
-
-    while (true) {
-      attempt += 1
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body,
-      })
-
-      if (response.ok || response.status !== 429 || attempt > maxRetries) {
-        return response
-      }
-
-      await delay(1000 * attempt)
-    }
-  }
-
-  const response = await fetchGemini(question)
-
-  if (!response.ok) {
-    const errorText = await response.text().catch(() => '')
+  if (!initialResponse.ok) {
+    const errorText = await initialResponse.text().catch(() => '')
     return NextResponse.json(
       {
         message:
-          response.status === 429
+          initialResponse.status === 429
             ? 'Gemini respondió 429: demasiadas solicitudes. Espera unos segundos e inténtalo de nuevo.'
-            : `Error desde Gemini: ${response.status} ${response.statusText}`,
+            : `Error desde Gemini: ${initialResponse.status} ${initialResponse.statusText}`,
         details: errorText,
       },
-      { status: response.status }
+      { status: initialResponse.status }
     )
   }
 
-  const data = await response.json()
+  const initialData = await initialResponse.json()
+  const finalMessage =
+    initialData.candidates?.[0]?.content?.parts?.[0]?.text ||
+    'No pude responder ahora. Intenta reformular tu pregunta.'
 
-  const message =
-    data.candidates?.[0]?.content?.parts?.[0]?.text ||
-    'No pude responder ahora.'
-
-  return NextResponse.json({ message })
+  return NextResponse.json({ message: finalMessage })
 }

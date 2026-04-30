@@ -25,6 +25,12 @@ export default function HotelAICoach() {
   const { theme, resolvedTheme, setTheme } = useTheme()
 
   const isLoading = status === 'loading'
+
+  const clearHistory = () => {
+    setMessages([])
+    localStorage.removeItem('hotel-ai-messages')
+    setError(null)
+  }
   const currentTheme = mounted ? resolvedTheme ?? theme : 'light'
 
   useEffect(() => {
@@ -161,7 +167,16 @@ export default function HotelAICoach() {
           <aside className="space-y-4">
             <Card className="shadow-lg border-border/50 bg-card">
               <CardContent className="pb-4">
-                <h3 className="text-base font-semibold text-foreground mb-2">Historial</h3>
+                <div className="mb-4 flex items-center justify-between gap-3">
+                  <h3 className="text-base font-semibold text-foreground">Historial</h3>
+                  <button
+                    type="button"
+                    onClick={clearHistory}
+                    className="rounded-full border border-border bg-background px-3 py-1 text-xs font-medium text-muted-foreground transition hover:bg-secondary/80 hover:text-foreground"
+                  >
+                    Borrar historial
+                  </button>
+                </div>
                 <div className="space-y-2 max-h-[64vh] overflow-y-auto pr-1">
                   {messages.length === 0 ? (
                     <p className="text-sm text-muted-foreground">Tu historial aparecerá aquí mientras chateas con el AI Coach.</p>

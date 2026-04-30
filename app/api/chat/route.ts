@@ -38,15 +38,14 @@ async function delay(ms: number) {
 }
 
 async function fetchGemini(prompt: string, model: string) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`
+  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=" + process.env.GEMINI_API_KEY
   const body = JSON.stringify({
     temperature: 0.2,
     maxOutputTokens: 512,
-    contents: [
-      {
-        text: prompt,
-      },
-    ],
+    candidateCount: 1,
+    prompt: {
+      text: prompt,
+    },
   })
 
   const maxRetries = 2
@@ -133,8 +132,11 @@ export async function POST(req: Request) {
   }
 
   const initialData = await initialResponse.json()
+  const firstCandidate = initialData.candidates?.[0]
   const finalMessage =
-    initialData.candidates?.[0]?.content?.parts?.[0]?.text ||
+    firstCandidate?.content?.[0]?.text ||
+    firstCandidate?.content?.parts?.[0]?.text ||
+    firstCandidate?.content?.text ||
     'No pude responder ahora. Intenta reformular tu pregunta.'
 
   return NextResponse.json({ message: finalMessage })

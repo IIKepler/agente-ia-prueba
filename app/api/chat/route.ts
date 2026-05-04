@@ -40,11 +40,18 @@ async function delay(ms: number) {
 async function fetchGemini(prompt: string, model: string) {
   const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=" + process.env.GEMINI_API_KEY
   const body = JSON.stringify({
-    temperature: 0.2,
-    maxOutputTokens: 512,
-    candidateCount: 1,
-    prompt: {
-      text: prompt,
+    contents: [
+      {
+        parts: [
+          {
+            text: prompt,
+          },
+        ],
+      },
+    ],
+    generationConfig: {
+      temperature: 0.2,
+      maxOutputTokens: 512,
     },
   })
 
@@ -132,12 +139,15 @@ export async function POST(req: Request) {
   }
 
   const initialData = await initialResponse.json()
-  const firstCandidate = initialData.candidates?.[0]
-  const finalMessage =
-    firstCandidate?.content?.[0]?.text ||
-    firstCandidate?.content?.parts?.[0]?.text ||
-    firstCandidate?.content?.text ||
-    'No pude responder ahora. Intenta reformular tu pregunta.'
+  
+  let finalMessage = 'No pude responder ahora. Intenta reformular tu pregunta.'
+  
+  if (initialData.candidates && initialData.candidates.length > 0) {
+    const firstCandidate = initialData.candidates[0]
+    if (firstCandidate.content && firstCandidate.content.parts && firstCandidate.content.parts.length > 0) {
+      finalMessage = firstCandidate.content.parts[0].text || finalMessage
+    }
+  }
 
   return NextResponse.json({ message: finalMessage })
 }

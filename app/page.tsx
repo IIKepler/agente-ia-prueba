@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTheme } from 'next-themes'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -14,12 +14,39 @@ type ChatMessage = {
   text: string
 }
 
+type ChatThread = {
+  id: string
+  question: string
+  messages: ChatMessage[]
+}
+
+function cleanAssistantText(text: string) {
+  return text
+    .replace(/\*\*(?:[\s\S]*?)\*\*/g, '$1')
+    .replace(/__([^_]+)__/g, '$1')
+    .replace(/\*\*/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()
+}
+
+function buildChatThreads(messages: ChatMessage[]): ChatThread[] {
+  return messages.reduce<ChatThread[]>((threads, message) => {
+    if (message.role === 'user') {
+      threads.push({ id: message.id, question: message.text, messages: [message] })
+    } else if (threads.length > 0) {
+      threads[threads.length - 1].messages.push(message)
+    }
+    return threads
+  }, [])
+}
+
 export default function HotelAICoach() {
   const [input, setInput] = useState('')
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [status, setStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [error, setError] = useState<string | null>(null)
   const [sessionId, setSessionId] = useState<string>('')
+  const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null)
   const [mounted, setMounted] = useState(false)
   const lastRequestRef = useRef<number | null>(null)
   const { theme, resolvedTheme, setTheme } = useTheme()
@@ -59,6 +86,15 @@ export default function HotelAICoach() {
     localStorage.setItem('hotel-ai-messages', JSON.stringify(messages))
   }, [messages])
 
+  const threads = useMemo(() => buildChatThreads(messages), [messages])
+  const activeThread = threads.find((thread) => thread.id === selectedThreadId) ?? threads[threads.length - 1]
+
+  useEffect(() => {
+    if (!selectedThreadId && threads.length > 0) {
+      setSelectedThreadId(threads[threads.length - 1].id)
+    }
+  }, [threads, selectedThreadId])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!input.trim() || isLoading) return
@@ -69,15 +105,17 @@ export default function HotelAICoach() {
       return
     }
 
-    lastRequestRef.current = now
     const question = input.trim()
+    const userMessageId = `${Date.now()}-user`
+    const userMessage: ChatMessage = { id: userMessageId, role: 'user', text: question }
+    const updatedMessages = [...messages, userMessage]
+
+    lastRequestRef.current = now
     setError(null)
     setStatus('loading')
-    setMessages((prev) => [
-      ...prev,
-      { id: `${Date.now()}-user`, role: 'user', text: question },
-    ])
+    setMessages(updatedMessages)
     setInput('')
+    setSelectedThreadId(userMessageId)
 
     try {
       const response = await fetch('/api/chat', {
@@ -98,9 +136,10 @@ export default function HotelAICoach() {
       }
 
       const data = await response.json()
+      const cleanedText = cleanAssistantText(data.message || '')
       setMessages((prev) => [
         ...prev,
-        { id: `${Date.now()}-assistant`, role: 'assistant', text: data.message },
+        { id: `${Date.now()}-assistant`, role: 'assistant', text: cleanedText },
       ])
       setStatus('idle')
     } catch (err) {
@@ -178,23 +217,23 @@ export default function HotelAICoach() {
                   </button>
                 </div>
                 <div className="space-y-2 max-h-[64vh] overflow-y-auto pr-1">
-                  {messages.length === 0 ? (
+                  {threads.length === 0 ? (
                     <p className="text-sm text-muted-foreground">Tu historial aparecerá aquí mientras chateas con el AI Coach.</p>
                   ) : (
-                    messages.map((message) => (
-                      <div
-                        key={message.id}
-                        className={`rounded-2xl p-3 text-sm ${
-                          message.role === 'user'
-                            ? 'bg-secondary/20 border border-secondary/50 text-foreground'
-                            : 'bg-card border border-border/60 text-foreground'
+                    threads.map((thread) => (
+                      <button
+                        key={thread.id}
+                        type="button"
+                        onClick={() => setSelectedThreadId(thread.id)}
+                        className={`w-full rounded-2xl p-3 text-left text-sm transition ${
+                          thread.id === selectedThreadId
+                            ? 'bg-primary/10 border border-primary text-foreground'
+                            : 'bg-secondary/20 border border-secondary/50 text-foreground hover:bg-secondary/30'
                         }`}
                       >
-                        <p className="font-medium text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-1">
-                          {message.role === 'user' ? 'Tú' : 'AI Coach'}
-                        </p>
-                        <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
-                      </div>
+                        <p className="font-medium text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-1">Tú</p>
+                        <p className="whitespace-pre-wrap leading-relaxed">{thread.question}</p>
+                      </button>
                     ))
                   )}
                 </div>
@@ -280,19 +319,32 @@ export default function HotelAICoach() {
               </Card>
             )}
 
-            {latestResponse && (
+            {activeThread && (
               <Card className="border-accent/30 bg-card shadow-lg animate-in fade-in slide-in-from-bottom-4 duration-500">
                 <CardContent className="pt-6">
-                  <div className="flex items-start gap-3">
-                    <div className="p-2 bg-accent/20 rounded-lg shrink-0">
-                      <Sparkles className="h-5 w-5 text-accent-foreground" />
+                  <div className="mb-4 flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">Conversación</p>
+                      <p className="text-xs text-muted-foreground">Haz clic en una pregunta del historial para ver el chat completo.</p>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-muted-foreground mb-2">Consejo del AI Coach</p>
-                      <div className="prose prose-sm max-w-none text-foreground whitespace-pre-wrap leading-relaxed">
-                        {latestResponse.text}
+                    <span className="rounded-full border border-border px-3 py-1 text-xs text-muted-foreground">Última pregunta</span>
+                  </div>
+                  <div className="space-y-4">
+                    {activeThread.messages.map((message) => (
+                      <div
+                        key={message.id}
+                        className={`rounded-2xl p-4 text-sm ${
+                          message.role === 'user'
+                            ? 'bg-secondary/20 border border-secondary/50 text-foreground'
+                            : 'bg-card border border-border/60 text-foreground'
+                        }`}
+                      >
+                        <p className="font-medium text-[11px] uppercase tracking-[0.2em] text-muted-foreground mb-1">
+                          {message.role === 'user' ? 'Tú' : 'AI Coach'}
+                        </p>
+                        <p className="whitespace-pre-wrap leading-relaxed">{message.text}</p>
                       </div>
-                    </div>
+                    ))}
                   </div>
                 </CardContent>
               </Card>

@@ -38,7 +38,11 @@ async function delay(ms: number) {
 }
 
 async function fetchGemini(prompt: string, model: string) {
-  const url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-lite-latest:generateContent?key=" + process.env.GEMINI_API_KEY
+  const url =
+    'https://generativelanguage.googleapis.com/v1beta/models/' +
+    model +
+    ':generateContent?key=' +
+    process.env.GEMINI_API_KEY
   const body = JSON.stringify({
     contents: [
       {
@@ -122,7 +126,11 @@ export async function POST(req: Request) {
 
   const model = chooseModel(question)
   const prompt = buildPrompt(question, history)
-  const initialResponse = await fetchGemini(prompt, model)
+  let initialResponse = await fetchGemini(prompt, model)
+
+  if (!initialResponse.ok && initialResponse.status >= 500 && model !== 'gemini-2.0') {
+    initialResponse = await fetchGemini(prompt, 'gemini-2.0')
+  }
 
   if (!initialResponse.ok) {
     const errorText = await initialResponse.text().catch(() => '')
